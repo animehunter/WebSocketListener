@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <TargetFrameworks>net45;netstandard1.3</TargetFrameworks>
+        <TargetFrameworks>netstandard1.3</TargetFrameworks>
         <Description>http://vtortola.github.io/WebSocketListener</Description>
         <Company>vtortola</Company>
         <Product>vtortola.WebSockets.Rfc6455</Product>
