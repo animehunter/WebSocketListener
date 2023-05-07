@@ -10,6 +10,7 @@ using vtortola.WebSockets.Extensibility;
 using vtortola.WebSockets.Http;
 using vtortola.WebSockets.Tools;
 using vtortola.WebSockets.Transports;
+using static vtortola.WebSockets.Async.AsyncConditionSource;
 
 namespace vtortola.WebSockets
 {
@@ -45,7 +46,7 @@ namespace vtortola.WebSockets
             var handshake = new WebSocketHandshake(request);
             try
             {
-                ReadHttpRequest(networkConnection, handshake);
+                await ReadHttpRequestAsync(networkConnection, handshake).ConfigureAwait(false);
                 if (!IsWebSocketRequestValid(handshake))
                 {
                     await WriteHttpResponseAsync(handshake, networkConnection).ConfigureAwait(false);
@@ -82,7 +83,7 @@ namespace vtortola.WebSockets
                 handshake.Error = ExceptionDispatchInfo.Capture(handshakeError);
                 if (!handshake.IsResponseSent)
                 {
-                    try { WriteHttpResponse(handshake, networkConnection); }
+                    try { await WriteHttpResponseAsync(handshake, networkConnection).ConfigureAwait(false); }
                     catch (Exception writeResponseError)
                     {
                         if (this.log.IsDebugEnabled)
@@ -156,25 +157,12 @@ namespace vtortola.WebSockets
             handshake.IsResponseSent = true;
             using (var writer = new StreamWriter(networkConnection.AsStream(), Encoding.ASCII, 1024, true))
             {
-                WriteResponseInternal(handshake, writer);
+                await WriteResponseInternal(handshake, writer).ConfigureAwait(false);
                 await writer.FlushAsync().ConfigureAwait(false);
             }
         }
 
-        private void WriteHttpResponse(WebSocketHandshake handshake, NetworkConnection networkConnection)
-        {
-            if (handshake == null) throw new ArgumentNullException(nameof(handshake));
-            if (networkConnection == null) throw new ArgumentNullException(nameof(networkConnection));
-
-            handshake.IsResponseSent = true;
-            using (var writer = new StreamWriter(networkConnection.AsStream(), Encoding.ASCII, 1024, true))
-            {
-                WriteResponseInternal(handshake, writer);
-                writer.Flush();
-            }
-        }
-
-        private void WriteResponseInternal(WebSocketHandshake handshake, StreamWriter writer)
+        private async Task WriteResponseInternal(WebSocketHandshake handshake, StreamWriter writer)
         {
             if (handshake == null) throw new ArgumentNullException(nameof(handshake));
             if (writer == null) throw new ArgumentNullException(nameof(writer));
@@ -182,35 +170,34 @@ namespace vtortola.WebSockets
             if (!handshake.IsWebSocketRequest)
             {
                 handshake.Response.Status = HttpStatusCode.BadRequest;
-                SendNegotiationErrorResponse(writer, handshake.Response.Status);
+                await SendNegotiationErrorResponseAsync(writer, handshake.Response.Status);
             }
             else if (!handshake.IsVersionSupported)
             {
                 handshake.Response.Status = HttpStatusCode.UpgradeRequired;
-                SendVersionNegotiationErrorResponse(writer);
+                await SendVersionNegotiationErrorResponse(writer);
             }
             else if (handshake.IsValidWebSocketRequest)
             {
-                SendNegotiationResponse(handshake, writer);
+                await SendNegotiationResponse(handshake, writer);
             }
             else
             {
                 handshake.Response.Status = handshake.Response.Status != HttpStatusCode.SwitchingProtocols ? handshake.Response.Status : HttpStatusCode.BadRequest;
-                SendNegotiationErrorResponse(writer, handshake.Response.Status);
+                await SendNegotiationErrorResponseAsync(writer, handshake.Response.Status);
             }
         }
-        private void ReadHttpRequest(NetworkConnection clientStream, WebSocketHandshake handshake)
+        private async Task ReadHttpRequestAsync(NetworkConnection clientStream, WebSocketHandshake handshake)
         {
             if (clientStream == null) throw new ArgumentNullException(nameof(clientStream));
             if (handshake == null) throw new ArgumentNullException(nameof(handshake));
 
             using (var sr = new StreamReader(clientStream.AsStream(), Encoding.ASCII, false, 1024, true))
             {
-                var line = sr.ReadLine();
-
+                var line = await sr.ReadLineAsync();
                 ParseGET(line, handshake);
 
-                while (!string.IsNullOrWhiteSpace(line = sr.ReadLine()))
+                while (!string.IsNullOrWhiteSpace(line = await sr.ReadLineAsync()))
                     handshake.Request.Headers.TryParseAndAdd(line);
 
                 ParseCookies(handshake);
@@ -231,20 +218,20 @@ namespace vtortola.WebSockets
             string version = parts[2];
             handshake.Request.HttpVersion = version.EndsWith("1.1") ? HttpVersion11 : HttpVersion10;
         }
-        private void SendNegotiationResponse(WebSocketHandshake handshake, StreamWriter writer)
+        private async Task SendNegotiationResponse(WebSocketHandshake handshake, StreamWriter writer)
         {
-            writer.Write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n");
+            await writer.WriteAsync("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n");
             if (handshake.Response.Cookies.Count > 0)
             {
                 foreach (var cookie in handshake.Response.Cookies)
                 {
-                    writer.Write("Set-Cookie: ");
-                    writer.Write(cookie.ToString());
-                    writer.Write("\r\n");
+                    await writer.WriteAsync("Set-Cookie: ");
+                    await writer.WriteAsync(cookie.ToString());
+                    await writer.WriteAsync("\r\n");
                 }
             }
-            writer.Write("Sec-WebSocket-Accept: ");
-            writer.Write(handshake.ComputeHandshake());
+            await writer.WriteAsync("Sec-WebSocket-Accept: ");
+            await writer.WriteAsync(handshake.ComputeHandshake());
 
             // https://tools.ietf.org/html/rfc6455#section-4.2.2
             /* 
@@ -259,13 +246,13 @@ namespace vtortola.WebSockets
              */
             if (handshake.Response.Headers.Contains(ResponseHeader.WebSocketProtocol))
             {
-                writer.Write("\r\nSec-WebSocket-Protocol: ");
-                writer.Write(handshake.Response.Headers[ResponseHeader.WebSocketProtocol]);
+                await writer.WriteAsync("\r\nSec-WebSocket-Protocol: ");
+                await writer.WriteAsync(handshake.Response.Headers[ResponseHeader.WebSocketProtocol]);
             }
 
             WriteHandshakeCookies(handshake, writer);
 
-            writer.Write("\r\n\r\n");
+            await writer.WriteAsync("\r\n\r\n");
         }
 
         private static void WriteHandshakeCookies(WebSocketHandshake handshake, StreamWriter writer)
@@ -306,32 +293,26 @@ namespace vtortola.WebSockets
                 }
             }
         }
-        private void SendNegotiationErrorResponse(StreamWriter writer, HttpStatusCode code)
+        private async Task SendNegotiationErrorResponseAsync(StreamWriter writer, HttpStatusCode code)
         {
             if (writer == null) throw new ArgumentNullException(nameof(writer));
 
             var intCode = (int)code;
-            writer.Write("HTTP/1.1 ");
-            writer.Write(intCode);
-            writer.Write(" ");
-            writer.Write(HttpStatusDescription.Get(code));
-            writer.Write("\r\n");
-            writer.Write("Connection: close");
-            writer.Write("\r\n\r\n");
+            await writer.WriteAsync($"HTTP/1.1 {intCode} {HttpStatusDescription.Get(code)}\r\nConnection: close\r\n\r\n");
         }
-        private void SendVersionNegotiationErrorResponse(StreamWriter writer)
+        private async Task SendVersionNegotiationErrorResponse(StreamWriter writer)
         {
-            writer.Write("HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: ");
+            await writer.WriteAsync("HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: ");
 
             bool first = true;
             foreach (var standard in this.factories)
             {
                 if (!first)
-                    writer.Write(",");
+                    await writer.WriteAsync(",");
                 first = false;
-                writer.Write(standard.Version.ToString());
+                await writer.WriteAsync(standard.Version.ToString());
             }
-            writer.Write("\r\n\r\n");
+            await writer.WriteAsync("\r\n\r\n");
         }
 
         private void ConsolidateObjectModel(WebSocketHandshake handshake)
