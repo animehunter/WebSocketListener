@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFrameworks>netstandard1.3</TargetFrameworks>
+        <GenerateErrorForMissingTargetingPacks>false</GenerateErrorForMissingTargetingPacks>
         <Description>http://vtortola.github.io/WebSocketListener</Description>
         <Company>vtortola</Company>
         <Product>vtortola.WebSockets.Rfc6455</Product>
